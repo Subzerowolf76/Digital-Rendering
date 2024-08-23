@@ -1,31 +1,713 @@
-﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 15
-VisualStudioVersion = 15.0.28307.1169
-MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "OpenGLSample", "OpenGLSample\OpenGLSample.vcxproj", "{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}"
-EndProject
-Global
-	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|x64 = Debug|x64
-		Debug|x86 = Debug|x86
-		Release|x64 = Release|x64
-		Release|x86 = Release|x86
-	EndGlobalSection
-	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}.Debug|x64.ActiveCfg = Debug|x64
-		{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}.Debug|x64.Build.0 = Debug|x64
-		{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}.Debug|x86.ActiveCfg = Debug|Win32
-		{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}.Debug|x86.Build.0 = Debug|Win32
-		{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}.Release|x64.ActiveCfg = Release|x64
-		{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}.Release|x64.Build.0 = Release|x64
-		{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}.Release|x86.ActiveCfg = Release|Win32
-		{22239802-6F08-4A9A-9FF6-DD4D2D7CB8BD}.Release|x86.Build.0 = Release|Win32
-	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {345D71F1-9DC6-4405-BC70-A5AFCFA6CB02}
-	EndGlobalSection
-EndGlobal
+#include <iostream>         
+#include <cstdlib>         
+#include <GL/glew.h>        
+#include <GLFW/glfw3.h>     
+#include <glm/glm.hpp>
+#include <glm/gtx/transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <cmath>
+
+// STB for texturing
+#define STB_IMAGE_IMPLEMENTATION
+#include "C:\Users\Devin\source\repos\DPCS330 - Module 6 Milestone\OpenGLSample\stb_image.h"
+
+using namespace std;
+
+#ifndef GLSL
+#define GLSL(Version, Source) "#version " #Version " core \n" #Source
+#endif
+
+namespace
+{
+    // Name of window and dimensions
+    const char* const WINDOW_TITLE = "Module 6 Milestone - Devin Perry"; 
+
+    const int WINDOW_WIDTH = 800;
+    const int WINDOW_HEIGHT = 600;
+
+    struct GLMesh
+    {
+        GLuint vao;         
+        GLuint vbos[2];     
+        GLuint nIndices;    
+    };
+
+    // Some variables
+    GLFWwindow* gWindow = nullptr;
+    GLMesh cubeMesh;
+    GLMesh planeMesh;
+    GLMesh cylinderMesh;
+    GLuint gProgramId;
+    GLfloat cylinderVerts[1000]; 
+    GLushort cylinderIndices[1500];
+    bool usePerspectiveProjection = true;
+    bool pKeyPressed = false;
+
+    // Initial Camera Parameters
+    glm::vec3 cameraPosition = glm::vec3(0.0f, 0.0f, 5.0f);
+    glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+    glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    float cameraSpeed = 0.1f;
+    float cameraRotationSpeed = 0.5f;
+    float cameraZoomSpeed = 0.1f;
+    double lastX = WINDOW_WIDTH / 2.0;
+    double lastY = WINDOW_HEIGHT / 2.0;
+
+    GLuint bluePlasticTexture;
+    GLuint beachTexture;
+}
+
+// Initializers for everything
+bool UInitialize(int, char* [], GLFWwindow** window);
+void UResizeWindow(GLFWwindow* window, int width, int height);
+void UProcessInput(GLFWwindow* window);
+void UCreateMesh(GLMesh& mesh, GLfloat* vertices, GLushort* indices, GLsizei vertexCount, GLsizei indexCount);
+void UDestroyMesh(GLMesh& mesh);
+void URender(GLMesh& cubeMesh, GLMesh& planeMesh, GLMesh& cylinderMesh);
+bool UCreateShaderProgram(const char* vtxShaderSource, const char* fragShaderSource, GLuint& programId);
+void UDestroyShaderProgram(GLuint programId);
+void ProcessKeyboardInput(GLFWwindow* window);
+void ProcessMouseInput(GLFWwindow* window, double xpos, double ypos);
+void ProcessScrollInput(GLFWwindow* window, double xoffset, double yoffset);
+void generateCylinder(float x, float y, float z, float radius, float height, int sides, GLfloat* vertices, GLushort* indices);
+
+const GLchar* vertexShaderSource = GLSL(440,
+    layout(location = 0) in vec3 position;
+    layout(location = 1) in vec4 color;
+    layout(location = 2) in vec2 texCoord; // Add texture coordinates
+
+    out vec4 vertexColor;
+    out vec2 fragTexCoord; // Pass texture coordinates to fragment shader
+
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
+
+    void main()
+    {
+        gl_Position = projection * view * model * vec4(position, 1.0f);
+        vertexColor = color;
+        fragTexCoord = texCoord; // Pass texture coordinates to fragment shader
+    }
+);
+
+const GLchar* fragmentShaderSource = GLSL(440,
+    in vec4 vertexColor;
+    in vec2 fragTexCoord;
+
+    out vec4 fragmentColor;
+
+    uniform sampler2D textureSampler;
+
+    void main()
+    {
+        vec4 texColor = texture(textureSampler, fragTexCoord);  
+       
+        fragmentColor = texColor;
+    }
+);
+
+///////////////////////////////////////////////////////////////////////////
+
+GLuint LoadTexture(const char* path)
+{
+    GLuint textureId;
+    glGenTextures(1, &textureId);
+    glBindTexture(GL_TEXTURE_2D, textureId);
+
+    int width, height, nrChannels;
+    stbi_set_flip_vertically_on_load(true); // Flip the loaded texture's y-axis
+    unsigned char* data = stbi_load(path, &width, &height, &nrChannels, 0);
+
+    if (data)
+    {
+        GLenum format;
+        if (nrChannels == 1)
+            format = GL_RED;
+        else if (nrChannels == 3)
+            format = GL_RGB;
+        else if (nrChannels == 4)
+            format = GL_RGBA;
+
+        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    else
+    {
+        std::cerr << "Failed to load texture: " << path << std::endl;
+    }
+
+    stbi_image_free(data);
+    return textureId;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+int main(int argc, char* argv[])
+{ 
+    if (!UInitialize(argc, argv, &gWindow))
+        return EXIT_FAILURE;
+    
+    // You'll see these blocks of lines. They were just to help me visually divide the code.
+    //-------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------
+
+    GLfloat cubeVerts[] = {
+            // Front face
+            -0.5f,  0.7f,  0.5f,   1.0f, 0.0f,   0.0f, 1.0f, // Top Left
+             0.5f,  0.7f,  0.5f,   0.0f, 1.0f,   0.0f, 1.0f, // Top Right
+             0.5f, -0.7f,  0.5f,   0.0f, 0.0f,   1.0f, 1.0f, // Bottom Right
+            -0.5f, -0.7f,  0.5f,   1.0f, 1.0f,   0.0f, 1.0f, // Bottom Left
+
+            // Back face
+            -0.5f,  0.7f, -0.5f,   1.0f, 0.0f,   0.0f, 1.0f, // Top Left
+             0.5f,  0.7f, -0.5f,   0.0f, 1.0f,   0.0f, 1.0f, // Top Right
+             0.5f, -0.7f, -0.5f,   0.0f, 0.0f,   1.0f, 1.0f, // Bottom Right
+            -0.5f, -0.7f, -0.5f,   1.0f, 1.0f,   0.0f, 1.0f, // Bottom Left  
+    };
+
+    GLushort cubeIndices[] = {
+            // Front face
+            0, 1, 2, // Triangle 1
+            2, 3, 0, // Triangle 2
+
+            // Top face
+            4, 5, 6, // Triangle 3
+            6, 7, 4, // Triangle 4
+
+            // Right face
+            1, 5, 6, // Triangle 5
+            6, 2, 1, // Triangle 6
+
+            // Bottom face
+            0, 3, 7, // Triangle 7
+            7, 4, 0, // Triangle 8
+
+            // Left face
+            0, 4, 5, // Triangle 9
+            5, 1, 0  // Triangle 10 
+    };
+
+    UCreateMesh(cubeMesh, cubeVerts, cubeIndices, sizeof(cubeVerts) / sizeof(cubeVerts[0]), sizeof(cubeIndices) / sizeof(cubeIndices[0]));
+
+    //-------------------------------------------------------------------------------------------------
+
+    GLfloat planeVerts[] = {
+            -3.0f, -0.7f, -3.0f,  1.0f, 0.0f,   0.0f, 1.0f, // Bottom Left (red)
+             3.0f, -0.7f, -3.0f,  0.0f, 0.0f,   1.0f, 1.0f, // Bottom Right (blue)
+             3.0f, -0.7f,  3.0f,  0.0f, 1.0f,   0.0f, 1.0f, // Top Right (green)
+            -3.0f, -0.7f,  3.0f,  1.0f, 0.0f,   1.0f, 1.0f  // Top Left (pink)
+    };
+
+    GLushort planeIndices[] = {        
+             0, 1, 2, 
+             2, 3, 0  
+    };
+  
+    UCreateMesh(planeMesh, planeVerts, planeIndices, sizeof(planeVerts) / sizeof(planeVerts[0]), sizeof(planeIndices) / sizeof(planeIndices[0]));
+
+    //-------------------------------------------------------------------------------------------------
+
+        // Changing the values here will change the location and morphs of the cylinder
+        //             x      y     z  |radius|height|sides
+    generateCylinder(-0.5f, -0.5f, 0.0f, 0.35f, 1.0f, 30, cylinderVerts, cylinderIndices);
+    
+    UCreateMesh(cylinderMesh, cylinderVerts, cylinderIndices, sizeof(cylinderVerts) / sizeof(cylinderVerts[0]), sizeof(cylinderIndices) / sizeof(cylinderIndices[0]));
+
+    //-------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------
+
+    if (!UCreateShaderProgram(vertexShaderSource, fragmentShaderSource, gProgramId))
+        return EXIT_FAILURE;
+
+    bluePlasticTexture = LoadTexture("blueplastic.jpg");
+    beachTexture = LoadTexture("beach.jpg");
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+    // Cursor caller
+    glfwSetCursorPosCallback(gWindow, [](GLFWwindow* window, double xpos, double ypos) {
+        ProcessMouseInput(window, xpos, ypos);
+        });
+    
+    // Scroll caller
+    glfwSetScrollCallback(gWindow, [](GLFWwindow* window, double xoffset, double yoffset) {
+        ProcessScrollInput(window, xoffset, yoffset);
+        });
+
+    while (!glfwWindowShouldClose(gWindow))
+{
+    UProcessInput(gWindow);
+    ProcessKeyboardInput(gWindow);
+    
+    // Check for "P" key press to toggle between perspective and orthographic projections
+    if (glfwGetKey(gWindow, GLFW_KEY_P) == GLFW_PRESS && !pKeyPressed)
+    {
+        usePerspectiveProjection = !usePerspectiveProjection;
+        std::cout << "Switched to " << (usePerspectiveProjection ? "perspective" : "orthographic") << " projection" << std::endl;
+
+        pKeyPressed = true; 
+    }
+    
+    else if (glfwGetKey(gWindow, GLFW_KEY_P) == GLFW_RELEASE)
+    {
+        pKeyPressed = false; 
+    }
+
+    URender(cubeMesh, planeMesh, cylinderMesh);
+    glfwPollEvents();
+}
+
+    UDestroyMesh(cubeMesh);
+    UDestroyMesh(planeMesh);
+    UDestroyMesh(cylinderMesh);
+    UDestroyShaderProgram(gProgramId);
+
+    glfwTerminate();
+
+    return EXIT_SUCCESS;
+}
+
+bool UInitialize(int argc, char* argv[], GLFWwindow** window)
+{
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
+    * window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, NULL, NULL);
+    if (*window == NULL)
+    {
+        std::cout << "Failed to create GLFW window" << std::endl;
+        glfwTerminate();
+        return false;
+    }
+    glfwMakeContextCurrent(*window);
+    glfwSetFramebufferSizeCallback(*window, UResizeWindow);
+
+    glfwSetInputMode(*window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+    glewExperimental = GL_TRUE;
+    GLenum GlewInitResult = glewInit();
+
+    if (GLEW_OK != GlewInitResult)
+    {
+        std::cerr << glewGetErrorString(GlewInitResult) << std::endl;
+        return false;
+    }
+
+    cout << "INFO: OpenGL Version: " << glGetString(GL_VERSION) << endl;
+
+    return true;
+}
+
+void UProcessInput(GLFWwindow* window)
+{
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, true);
+}
+
+void UResizeWindow(GLFWwindow* window, int width, int height)
+{
+    glViewport(0, 0, width, height);
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+
+void URender(GLMesh& cubeMesh, GLMesh& planeMesh, GLMesh& cylinderMesh)
+{
+    glEnable(GL_DEPTH_TEST);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glm::mat4 view = glm::lookAt(cameraPosition, cameraPosition + cameraFront, cameraUp);
+
+    glUseProgram(gProgramId);
+
+    GLint viewLoc = glGetUniformLocation(gProgramId, "view");
+    GLint projLoc = glGetUniformLocation(gProgramId, "projection");
+
+    glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+
+    // This is an if/else for the condition where the P key is pressed
+    glm::mat4 projection;
+    if (usePerspectiveProjection)
+    {
+        projection = glm::perspective(glm::radians(45.0f), (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 100.0f);
+    }
+    else
+    {
+        float orthoSize = 3.0f;
+        projection = glm::ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 0.2f, 80.0f);
+        
+        // Only when this condition is true, camera controls will be disabled and only the P key works
+        cameraPosition = glm::vec3(0.0f, 1.0f, 10.0f);  
+        cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);  
+        cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);  
+    }
+
+    glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+    
+    // Render the cube
+    {
+        // The comments here repeat for the other two objects so I won't have them down there.
+        // Scale the object by 2 to enlarge
+        glm::mat4 scale = glm::scale(glm::vec3(2.0f, 2.0f, 2.0f));
+
+        // Rotate the shape around the y-axis by 45 degrees
+        glm::mat4 rotation = glm::rotate(45.0f, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        // Translate the object to the center of the screen
+        glm::mat4 translation = glm::translate(glm::vec3(-1.0f, -1.0f, 0.0f));
+
+        // Combine the transformations to form the model matrix
+        glm::mat4 model = translation * rotation * scale;
+
+        // Set up the view matrix to simulate the camera
+        glm::mat4 view = glm::lookAt(cameraPosition, cameraPosition + cameraFront, cameraUp);
+
+        // Set up the perspective projection matrix
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 100.0f);
+
+        // Use the shader program
+        glUseProgram(gProgramId);
+
+        // Set the uniform variables in the vertex shader
+        GLint modelLoc = glGetUniformLocation(gProgramId, "model");
+        GLint viewLoc = glGetUniformLocation(gProgramId, "view");
+        GLint projLoc = glGetUniformLocation(gProgramId, "projection");
+
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+        // Bind the texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, bluePlasticTexture);
+        glUniform1i(glGetUniformLocation(gProgramId, "textureSampler"), 0);
+
+        // Bind the vertex array object for the cube
+        glBindVertexArray(cubeMesh.vao);
+
+        // Draw the cube using its indices
+        glDrawElements(GL_TRIANGLES, cubeMesh.nIndices, GL_UNSIGNED_SHORT, nullptr);
+
+        // Unbind the texture and vertex array object
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindVertexArray(0);
+    }
+
+    // Render the plane
+    {     
+        glm::mat4 scale = glm::scale(glm::vec3(2.0f, 2.0f, 2.0f));
+
+        glm::mat4 rotation = glm::rotate(0.0f, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        glm::mat4 translation = glm::translate(glm::vec3(-1.0f, -1.0f, 0.0f));
+
+        glm::mat4 model = translation * rotation * scale;
+
+        glm::mat4 view = glm::lookAt(cameraPosition, cameraPosition + cameraFront, cameraUp);
+
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 100.0f);
+
+        glUseProgram(gProgramId);
+
+        GLint modelLoc = glGetUniformLocation(gProgramId, "model");
+        GLint viewLoc = glGetUniformLocation(gProgramId, "view");
+        GLint projLoc = glGetUniformLocation(gProgramId, "projection");
+
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, beachTexture);
+        glUniform1i(glGetUniformLocation(gProgramId, "textureSampler"), 0);
+
+        glBindVertexArray(planeMesh.vao);
+
+        glDrawElements(GL_TRIANGLES, planeMesh.nIndices, GL_UNSIGNED_SHORT, nullptr);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindVertexArray(0);
+    }
+
+    // Render the cylinder
+    {
+        glm::mat4 scale = glm::scale(glm::vec3(2.0f, 2.0f, 2.0f));
+
+        glm::mat4 translation = glm::translate(glm::vec3(0.0f, 1.0f, 0.0f));
+
+        glm::mat4 model = translation * scale;
+
+        glm::mat4 view = glm::lookAt(cameraPosition, cameraPosition + cameraFront, cameraUp);
+
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 100.0f);
+
+        glUseProgram(gProgramId);
+
+        GLint modelLoc = glGetUniformLocation(gProgramId, "model");
+        GLint viewLoc = glGetUniformLocation(gProgramId, "view");
+        GLint projLoc = glGetUniformLocation(gProgramId, "projection");
+
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, bluePlasticTexture);
+        glUniform1i(glGetUniformLocation(gProgramId, "textureSampler"), 0);
+
+        glBindVertexArray(cylinderMesh.vao);
+
+        glDrawElements(GL_TRIANGLES, cylinderMesh.nIndices, GL_UNSIGNED_SHORT, nullptr);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindVertexArray(0);
+    }
+    glfwSwapBuffers(gWindow);
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+
+void UCreateMesh(GLMesh& mesh, GLfloat* vertices, GLushort* indices, GLsizei vertexCount, GLsizei indexCount)
+{
+    const GLuint floatsPerVertex = 3;
+    const GLuint floatsPerColor = 4;
+
+    glGenVertexArrays(1, &mesh.vao);
+    glBindVertexArray(mesh.vao);
+
+    glGenBuffers(2, mesh.vbos);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.vbos[0]);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * vertexCount, vertices, GL_STATIC_DRAW);
+
+    mesh.nIndices = indexCount;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.vbos[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLushort) * indexCount, indices, GL_STATIC_DRAW);
+
+    GLsizei stride = sizeof(GLfloat) * (floatsPerVertex + floatsPerColor);
+
+    glVertexAttribPointer(0, floatsPerVertex, GL_FLOAT, GL_FALSE, stride, 0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, floatsPerColor, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(sizeof(GLfloat) * floatsPerVertex));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(sizeof(GLfloat) * (floatsPerVertex + floatsPerColor)));
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+
+void UDestroyMesh(GLMesh& mesh)
+{
+    glDeleteVertexArrays(1, &mesh.vao);
+    glDeleteBuffers(2, mesh.vbos);
+}
+
+bool UCreateShaderProgram(const char* vtxShaderSource, const char* fragShaderSource, GLuint& programId)
+{
+    int success = 0;
+    char infoLog[512];
+
+    programId = glCreateProgram();
+
+    GLuint vertexShaderId = glCreateShader(GL_VERTEX_SHADER);
+    GLuint fragmentShaderId = glCreateShader(GL_FRAGMENT_SHADER);
+
+    glShaderSource(vertexShaderId, 1, &vtxShaderSource, NULL);
+    glShaderSource(fragmentShaderId, 1, &fragShaderSource, NULL);
+
+    glCompileShader(vertexShaderId); 
+
+    glGetShaderiv(vertexShaderId, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(vertexShaderId, 512, NULL, infoLog);
+        std::cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+
+        return false;
+    }
+
+    glCompileShader(fragmentShaderId); 
+    glGetShaderiv(fragmentShaderId, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(fragmentShaderId, sizeof(infoLog), NULL, infoLog);
+        std::cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+
+        return false;
+    }
+
+    glAttachShader(programId, vertexShaderId);
+    glAttachShader(programId, fragmentShaderId);
+
+    glLinkProgram(programId);  
+    glGetProgramiv(programId, GL_LINK_STATUS, &success);
+    if (!success)
+    {
+        glGetProgramInfoLog(programId, sizeof(infoLog), NULL, infoLog);
+        std::cout << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+
+        return false;
+    }
+
+    glUseProgram(programId);   
+
+    return true;
+}
+
+void UDestroyShaderProgram(GLuint programId)
+{
+    glDeleteProgram(programId);
+    glfwTerminate(); 
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+
+// Keyboard input handler for movement actions
+void ProcessKeyboardInput(GLFWwindow* window) {
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)  // W
+        cameraPosition += cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)  // A
+        cameraPosition -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)  // S
+        cameraPosition -= cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)  // D
+        cameraPosition += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)  // Q
+        cameraPosition -= cameraSpeed * cameraUp;
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)  // E
+        cameraPosition += cameraSpeed * cameraUp;
+}
+
+// Mouse input handler to handle looking around
+void ProcessMouseInput(GLFWwindow* window, double xpos, double ypos) {
+    static double lastX = WINDOW_WIDTH / 2.0;
+    static double lastY = WINDOW_HEIGHT / 2.0;
+
+    double xoffset = xpos - lastX;
+    double yoffset = lastY - ypos;
+
+    lastX = xpos;
+    lastY = ypos;
+
+    const float sensitivity = 0.05f;
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
+
+    cameraFront = glm::normalize(glm::rotate(glm::mat4(1.0f), glm::radians((float)xoffset), cameraUp) * glm::vec4(cameraFront, 0.0f));
+    glm::vec3 right = glm::normalize(glm::cross(cameraFront, cameraUp));
+    cameraFront = glm::normalize(glm::rotate(glm::mat4(1.0f), glm::radians((float)yoffset), right) * glm::vec4(cameraFront, 0.0f));
+    cameraRotationSpeed = sensitivity * 10.0f;
+}
+
+// Scroll input handler that accelerates movement actions
+void ProcessScrollInput(GLFWwindow* window, double xoffset, double yoffset)
+{
+    cameraSpeed += static_cast<float>(yoffset) * 0.1f;
+    cameraSpeed = glm::clamp(cameraSpeed, 0.1f, 10.0f);
+}
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+
+// I had to generate the cylinder differently than the cube and plane. So here it is
+// Cylinder generation method
+void generateCylinder(float x, float y, float z, float radius, float height, int sides, GLfloat* vertices, GLushort* indices) {
+    float angleIncrement = glm::two_pi<float>() / static_cast<float>(sides);
+
+    // Top center
+    vertices[0] = x;
+    vertices[1] = y + height / 2.0f;
+    vertices[2] = z;
+
+    // Bottom center
+    vertices[3] = x;
+    vertices[4] = y - height / 2.0f;
+    vertices[5] = z;
+
+    // Vertices for the top circle
+    for (int i = 0; i < sides; ++i) {
+        float angle = angleIncrement * i;
+        int offset = (i + 1) * 7;
+
+        // sin and cos stuff
+        vertices[offset] = x + radius * std::cos(angle);
+        vertices[offset + 1] = y + height / 2.0f;
+        vertices[offset + 2] = z + radius * std::sin(angle);
+
+        vertices[offset + 3] = 0.0f;
+        vertices[offset + 4] = 1.0f;
+        vertices[offset + 5] = 0.0f;
+        vertices[offset + 6] = 1.0f;
+    }
+
+    // Vertices for the bottom circle
+    for (int i = 0; i < sides; ++i) {
+        float angle = angleIncrement * i;
+        int offset = (sides + i + 1) * 7;
+
+        vertices[offset] = x + radius * std::cos(angle);
+        vertices[offset + 1] = y - height / 2.0f;
+        vertices[offset + 2] = z + radius * std::sin(angle);
+
+        vertices[offset + 3] = 0.0f;
+        vertices[offset + 4] = 0.0f;
+        vertices[offset + 5] = 1.0f;
+        vertices[offset + 6] = 1.0f;
+    }
+
+    // Indices for the top circle
+    for (int i = 0; i < sides; ++i) {
+        int offset = i * 3;
+
+        indices[offset] = 0; 
+        indices[offset + 1] = static_cast<GLushort>(i + 1);
+        indices[offset + 2] = static_cast<GLushort>((i + 1) % sides + 1);
+    }
+
+    // Indices for the bottom circle
+    for (int i = 0; i < sides; ++i) {
+        int offset = (sides + i) * 3;
+
+        indices[offset] = 1; 
+        indices[offset + 1] = static_cast<GLushort>(sides + (i + 1) % sides + 1);
+        indices[offset + 2] = static_cast<GLushort>(sides + i + 1);
+    }
+
+    // Indices for the sides
+    for (int i = 0; i < sides; ++i) {
+        int offset = (2 * sides + i) * 3;
+        int next = (i + 1) % sides;
+
+        indices[offset] = static_cast<GLushort>(i + 1);
+        indices[offset + 1] = static_cast<GLushort>(next + 1);
+        indices[offset + 2] = static_cast<GLushort>(i + 1 + sides);
+
+        offset += 3;
+        indices[offset] = static_cast<GLushort>(next + 1);
+        indices[offset + 1] = static_cast<GLushort>(next + 1 + sides);
+        indices[offset + 2] = static_cast<GLushort>(i + 1 + sides);
+    }
+}
